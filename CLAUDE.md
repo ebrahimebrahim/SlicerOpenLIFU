@@ -12,14 +12,14 @@ The extension depends on the `openlifu` Python library (`../OpenLIFU-python`), w
 
 ### Building
 
-The extension is built against a 3D Slicer superbuild. Typical paths:
-- Slicer source: `../Slicer/`
-- Slicer superbuild: `../slicer-superbuild-v5.11/`
-- Slicer build: `../slicer-superbuild-v5.11/Slicer-build/`
+The extension is built against a 3D Slicer superbuild. Let `<slicer-superbuild>` denote the superbuild directory. Key paths within it:
+- Slicer build: `<slicer-superbuild>/Slicer-build/`
+- Slicer's bundled Python: `<slicer-superbuild>/python-install/bin/PythonSlicer`
+- Run Python in Slicer env: `<slicer-superbuild>/Slicer-build/Slicer --python-code "..." --no-splash --no-main-window --exit-after-startup`
 
 ```bash
 # Configure (from the repo root)
-cmake -DSlicer_DIR=../slicer-superbuild-v5.11/Slicer-build \
+cmake -DSlicer_DIR=<slicer-superbuild>/Slicer-build \
       -DBUILD_TESTING=ON \
       -DDVC_GDRIVE_KEY_PATH=/path/to/gdrive-service-account.json \
       -B build
@@ -33,7 +33,7 @@ cmake --build build
 ### Running Slicer with the Extension
 
 ```bash
-../slicer-superbuild-v5.11/Slicer-build/Slicer
+<slicer-superbuild>/Slicer-build/Slicer
 ```
 
 The extension modules are automatically loaded from the build directory.
@@ -56,6 +56,10 @@ cd build && ctest -R py_OpenLIFUSonicationPlanner --verbose
 Test names follow the pattern `py_<ModuleName>`. The main integration test is `py_OpenLIFUHome`, which orchestrates a full workflow through all modules sequentially.
 
 Test data is downloaded at runtime from Google Drive via DVC. The CMake config passes `GDRIVE_CREDENTIALS_DATA` and `DVC_REPO_DIR` as environment variables to CTest.
+
+### Python Version
+
+Slicer 5.10 embeds Python 3.12. This means PEP 701 f-string syntax (nested quotes) is valid, but the project has not yet adopted it widely.
 
 ### No Linter/Formatter Configuration
 
@@ -145,3 +149,9 @@ Tests are integration tests embedded in each module's main `.py` file as a `Test
 3. Calls each module's test methods sequentially (database → data → preplanning → localization → planning → control)
 
 Individual module tests create state needed by subsequent tests — they are not independent.
+
+## Commit Guidelines
+
+- **Every commit must reference a relevant GitHub issue number** in the title or body (e.g. `Fix target placement crash (#42)` or with `Fixes #42` / `Relates to #42` in the body).
+- When creating commits, always verify an issue number is included before finalizing.
+- When reviewing code or PRs, check that every commit references an issue number and flag any that don't.
