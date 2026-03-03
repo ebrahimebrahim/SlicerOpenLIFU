@@ -150,6 +150,34 @@ Tests are integration tests embedded in each module's main `.py` file as a `Test
 
 Individual module tests create state needed by subsequent tests — they are not independent.
 
+## Development Gotchas
+
+### Adding new pip dependencies
+Adding a package to `python-requirements.txt` is not enough. You must also add an `import` check for it in `python_requirements_exist()` in `lazyimport.py`. Otherwise, users who already have the other deps installed will never trigger a reinstall, and the new package won't be found. Follow the existing `bcrypt`/`threadpoolctl` pattern.
+
+### Qt signal slot signatures
+Qt's `clicked` signal always passes a `checked: bool` argument. Button slot handlers must accept it: `def on_foo_clicked(self, checked: bool)`. Omitting it causes a "takes 1 positional argument but 2 were given" error at runtime.
+
+### Displaying dynamic images in Qt
+Generate PNG bytes in memory (`io.BytesIO`), then `qt.QPixmap().loadFromData(buf.getvalue())` → `QLabel.setPixmap()`. No temp files needed. Pillow is available in Slicer's bundled Python. `QPixmap.loadFromData()` accepts raw Python `bytes` directly.
+
+### Adding icon resources to scripted modules
+Three steps: (1) place PNG in `<Module>/Resources/Icons/`, (2) list it in `MODULE_PYTHON_RESOURCES` in that module's `CMakeLists.txt`, (3) load at runtime via `self.resourcePath("Icons/foo.png")`. Missing step 2 means the file exists in source but won't be copied to the build tree.
+
+### Reactive widget enable/disable pattern
+`@parameterNodeWrapper` fires a generic `vtkCommand.ModifiedEvent` for any field change — no per-field signals. Modules observe it via `self.addObserver(get_openlifu_data_parameter_node().parameterNode, vtk.vtkCommand.ModifiedEvent, self.onDataParameterNodeModified)`. To add a new reactive widget, write an `updateFoo()` method and hook it into an existing dispatch method (e.g., `updatePhotoscanGenerationButtons()`).
+
+### Session state access
+- Check existence: `get_openlifu_data_parameter_node().loaded_session is None`
+- Get IDs: `loaded_session.get_subject_id()`, `loaded_session.get_session_id()` (methods, not attributes)
+- `get_openlifu_data_parameter_node()` is in `OpenLIFULib/util.py`, calls `slicer.util.getModuleLogic('OpenLIFUData').getParameterNode()`
+
+### Dialogs in module files
+Module dialogs (e.g., `PhotoscanPreviewDialog`, `AddNewPhotoscanDialog`) are `qt.QDialog` subclasses defined in the module's `.py` file. UI is built programmatically in `__init__`, shown with `dialog.exec_()`. No `.ui` files for dialogs.
+
+### `@display_errors` decorator
+All slot handlers should use `@display_errors` so exceptions are displayed to the user rather than silently swallowed by Qt's signal/slot mechanism.
+
 ## Commit Guidelines
 
 - **Every commit must reference a relevant GitHub issue number** in the title or body (e.g. `Fix target placement crash (#42)` or with `Fixes #42` / `Relates to #42` in the body).
