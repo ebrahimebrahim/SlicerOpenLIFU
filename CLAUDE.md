@@ -117,6 +117,10 @@ UI is defined in `Resources/UI/<ModuleName>.ui` (Qt Designer XML) and loaded in 
 
 **Parameter node wrappers** (`parameter_node_utils.py`): Thin wrapper classes (`SlicerOpenLIFUProtocol`, `SlicerOpenLIFUTransducer`, `SlicerOpenLIFUSession`, etc.) exist solely to enable Slicer's `@parameterNodeWrapper` serialization of `openlifu` types without importing `openlifu` at module load time. Each wrapper has a corresponding `@parameterNodeSerializer` class that serializes to/from JSON via the wrapped object's `to_json()`/`from_json()` methods.
 
+**`@parameterNodeWrapper` internals**: The wrapper stores each parameter via `_CachedParameterWrapper` or `_ParameterWrapper`. `_CachedParameterWrapper` adds its own `ModifiedEvent` observer on the MRML node to invalidate its cache when the node changes. This means the MRML parameter node can have multiple `ModifiedEvent` observers from different subsystems (connectGui, cached params, cross-module observers). Never blindly remove all `ModifiedEvent` observers from a parameter MRML node.
+
+**`SlicerOpenLIFUTransducer`** (`transducer.py`): A `@parameterPack` with fields `name`, `transducer` (a `SlicerOpenLIFUTransducerWrapper`), `model_node`, `transform_node`, etc. Access the underlying `openlifu.Transducer` via `slicer_transducer.transducer.transducer` (three levels: parameterPack → thin wrapper → openlifu object).
+
 **Cross-module communication**: Modules access each other's state through:
 - `get_openlifu_data_parameter_node()` / `get_openlifu_database_parameter_node()` — access parameter nodes from other modules
 - `get_cur_db()` — get the currently loaded `openlifu.db.Database`
@@ -177,6 +181,38 @@ Module dialogs (e.g., `PhotoscanPreviewDialog`, `AddNewPhotoscanDialog`) are `qt
 
 ### `@display_errors` decorator
 All slot handlers should use `@display_errors` so exceptions are displayed to the user rather than silently swallowed by Qt's signal/slot mechanism.
+
+## Custom App (OpenLIFU-app)
+
+A custom Slicer-based application at `../OpenLIFU-app` bundles SlicerOpenLIFU as a built-in extension. Its superbuild is at `../openlifu-superbuild/`, with the inner build at `../openlifu-superbuild/Slicer-build/`.
+
+Key differences from the vanilla extension build:
+- **Default home module**: The custom app sets `Slicer_DEFAULT_HOME_MODULE "Home"` (its own Home module, not OpenLIFUHome).
+- **All widgets created at startup**: The custom app's Home module connects to `startupCompleted()` and calls `enforceGuidedModeVisibility()` and Login's `cacheAllLoginRelatedWidgets()`, both of which call `widgetRepresentation()` on ALL OpenLIFU modules. This forces `setup()` (and thus `connectGui()`) to run on every module at startup, unlike vanilla Slicer where widgets are only created when a module is first selected.
+- **Tests**: Run via `ctest -R py_OpenLIFUHome -VV --test-dir ../openlifu-superbuild/Slicer-build/`. The test executable is `OpenLIFU` not `Slicer`.
+- **File paths**: Module files live in `lib/OpenLIFU-5.11/qt-scripted-modules/` (not `lib/Slicer-5.10/...`). The source copy is fetched at a pinned tag under `../openlifu-superbuild/SlicerOpenLIFU/`.
+
+### connectGui/disconnectGui bug (Slicer upstream issue)
+
+`@parameterNodeWrapper.connectGui()` adds a VTK `ModifiedEvent` observer on the underlying MRML parameter node, but `disconnectGui()` never removes it. This is a bug in Slicer's `slicer/parameterNodeWrapper/wrapper.py`. The stale observer's lambda captures the old wrapper instance.
+
+This is harmless in vanilla Slicer (widgets are created after scene clears), but causes segfaults in the custom app where all widgets are pre-created: after `slicer.mrmlScene.Clear()`, singleton parameter nodes survive but lose their `ModuleName` attribute. When `getParameterNode()` re-sets `ModuleName`, `ModifiedEvent` fires, the stale observer calls `_updateGUIFromParameterNode()` with the old wrapper, and it crashes.
+
+**Workaround** (in each module's `setParameterNode`): Track the VTK observer tag from `connectGui` by temporarily monkey-patching `mrml_node.AddObserver`, then `RemoveObserver(tag)` when `disconnectGui` is called. See the `_connectGuiVtkObserverTag` pattern in any module's `setParameterNode`.
+
+**Important constraint**: Do NOT use `parameterNode.RemoveObservers(vtk.vtkCommand.ModifiedEvent)` — it also removes:
+- `_CachedParameterWrapper` observers needed for cached parameter reads
+- Cross-module observers (e.g., PrePlanning/TransducerLocalization/SonicationPlanner/ProtocolConfig all observe Data's parameter node via `onDataParameterNodeModified`)
+
+### Cross-module parameter node observers
+
+Four modules observe the **Data** module's MRML parameter node for `ModifiedEvent` (set up once in `setup()`, never re-added):
+- PrePlanning → `self.onDataParameterNodeModified` → `updateInputOptions()`
+- TransducerLocalization → `self.onDataParameterNodeModified`
+- SonicationPlanner → `self.onDataParameterNodeModified`
+- ProtocolConfig → `self.onDataParameterNodeModified`
+
+These observers are critical for reactive UI updates when data is loaded/changed.
 
 ## Commit Guidelines
 
